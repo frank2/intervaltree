@@ -1,0 +1,3 @@
+[submodule "lib/avltree"]
+	path = lib/avltree
+	url = https://github.com/frank2/avltree.git

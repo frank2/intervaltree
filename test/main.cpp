@@ -149,8 +149,8 @@ test_intervalmap
          ++map[contained];
    }
 
-   ASSERT(map[{0x400000,0x406000}] == memory_regions.size());
-   ASSERT(map[{0x400000,0x401000}] == 5);
+   ASSERT(map[IntervalType(0x400000,0x406000)] == memory_regions.size());
+   ASSERT(map[IntervalType(0x400000,0x401000)] == 5);
    
    COMPLETE();
 }

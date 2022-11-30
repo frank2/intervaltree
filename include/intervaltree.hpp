@@ -1,6 +1,7 @@
 #ifndef __INTERVALTREE_H
 #define __INTERVALTREE_H
 
+#include <iostream>
 #include <set>
 
 #include <avltree.hpp>
@@ -11,8 +12,8 @@ namespace intervaltree
       using namespace avltree::exception;
    }
 
-   template<typename Key, typename KeyCompare>
-   using AVLTree = avltree::AVLTree<Key, KeyCompare>;
+   template<typename Key, typename Value, typename KeyOfValue, typename KeyCompare>
+   using AVLTreeBase = avltree::AVLTreeBase<Key, Value, KeyOfValue, KeyCompare>;
 
    template <typename _ValueType, bool Inclusive=false>
    struct Interval
@@ -86,8 +87,8 @@ namespace intervaltree
       }
    };
 
-   template <typename IntervalType>
-   class IntervalTree : public AVLTree<IntervalType, typename IntervalType::Compare>
+   template <typename IntervalType, typename ValueType, typename KeyOfValue>
+   class IntervalTreeBase : public AVLTreeBase<IntervalType, ValueType, KeyOfValue, typename IntervalType::Compare>
    {
       static_assert(std::is_base_of<Interval<typename IntervalType::ValueType, IntervalType::Inclusive>, IntervalType>::value,
                     "IntervalType template argument must derive the Interval structure.");
@@ -95,20 +96,20 @@ namespace intervaltree
    public:
       using SetType = std::set<IntervalType, typename IntervalType::Compare>;
       
-      class IntervalNode : public AVLTree::Node
+      class IntervalNode : public AVLTreeBase::Node
       {
       protected:
          typename IntervalType::ValueType _max;
 
       public:
-         friend class IntervalTree;
+         friend class IntervalTreeBase;
          
-         IntervalNode() : _max(0), AVLTree::Node() {}
-         IntervalNode(const typename AVLTree::ValueType &value) : _max(value.high), AVLTree::Node(value) {}
-         IntervalNode(const IntervalNode &other) : _max(other._max), AVLTree::Node(other) {}
+         IntervalNode() : _max(0), AVLTreeBase::Node() {}
+         IntervalNode(const typename AVLTreeBase::ValueType &value) : _max(KeyOfValue()(value).high), AVLTreeBase::Node(value) {}
+         IntervalNode(const IntervalNode &other) : _max(other._max), AVLTreeBase::Node(other) {}
 
-         virtual void copy_node_data(const typename AVLTree::Node &node) {
-            AVLTree::Node::copy_node_data(node);
+         virtual void copy_node_data(const typename AVLTreeBase::Node &node) {
+            AVLTreeBase::Node::copy_node_data(node);
 
             auto int_node = dynamic_cast<const IntervalNode &>(node);
             this->_max = int_node._max;
@@ -120,16 +121,16 @@ namespace intervaltree
             auto left = std::dynamic_pointer_cast<const IntervalNode>(this->left());
             auto right = std::dynamic_pointer_cast<const IntervalNode>(this->right());
 
-            auto left_max = (left != nullptr) ? left->max() : this->value().high;
-            auto right_max = (right != nullptr) ? right->max() : this->value().high;
+            auto left_max = (left != nullptr) ? left->max() : this->key().high;
+            auto right_max = (right != nullptr) ? right->max() : this->key().high;
 
-            return std::max(this->value().high, std::max(left_max, right_max));
+            return std::max(this->key().high, std::max(left_max, right_max));
          }
       };
 
    protected:
-      void update_max(typename AVLTree::SharedNode node) {
-         typename AVLTree::SharedNode update = node;
+      void update_max(typename AVLTreeBase::SharedNode node) {
+         typename AVLTreeBase::SharedNode update = node;
 
          while (update != nullptr)
          {
@@ -145,44 +146,228 @@ namespace intervaltree
          }
       }
 
-      virtual void rotate_left(typename AVLTree::SharedNode node) {
-         AVLTree::rotate_left(node);
+      virtual void rotate_left(typename AVLTreeBase::SharedNode node) {
+         AVLTreeBase::rotate_left(node);
          this->update_max(node);
       }
 
-      virtual void rotate_right(typename AVLTree::SharedNode node) {
-         AVLTree::rotate_right(node);
+      virtual void rotate_right(typename AVLTreeBase::SharedNode node) {
+         AVLTreeBase::rotate_right(node);
          this->update_max(node);
       }
 
-      virtual typename AVLTree::SharedNode allocate_node(const typename AVLTree::ValueType &value) {
+      virtual typename AVLTreeBase::SharedNode allocate_node(const typename AVLTreeBase::ValueType &value) {
          auto node = std::make_shared<IntervalNode>(value);
 
          return node;
       }
 
-      virtual typename AVLTree::SharedNode copy_node(typename AVLTree::ConstSharedNode node) {
+      virtual typename AVLTreeBase::SharedNode copy_node(typename AVLTreeBase::ConstSharedNode node) {
          auto upcast_node = std::static_pointer_cast<const IntervalNode>(node);
          auto new_node = std::make_shared<IntervalNode>(*upcast_node);
 
          return new_node;
       }
 
-      virtual void update_node(typename AVLTree::SharedNode node) {
+      virtual void update_node(typename AVLTreeBase::SharedNode node) {
          this->update_max(node);
-         return AVLTree::update_node(node);
+         return AVLTreeBase::update_node(node);
       }
 
    public:
-      IntervalTree() : AVLTree() {}
-      IntervalTree(std::vector<IntervalType> &nodes) : AVLTree(nodes) {}
-      IntervalTree(const IntervalTree &other) : AVLTree(other) {}
+      IntervalTreeBase() : AVLTreeBase() {}
+      IntervalTreeBase(std::vector<IntervalType> &nodes) : AVLTreeBase(nodes) {}
+      IntervalTreeBase(const IntervalTreeBase &other) : AVLTreeBase(other) {}
 
-      std::shared_ptr<IntervalNode> insert(const IntervalType &interval) {
-         return std::static_pointer_cast<IntervalNode>(AVLTree::insert(interval));
+      std::shared_ptr<IntervalNode> insert(const ValueType &value) {
+         return std::static_pointer_cast<IntervalNode>(AVLTreeBase::insert(value));
+      }
+         
+      SetType containing_point(const typename IntervalType::ValueType &point) const {
+         auto result = SetType();
+         if (this->root() == nullptr) { return result; }
+
+         std::vector<typename AVLTreeBase::ConstSharedNode> traversal = { this->root() };
+
+         while (traversal.size() > 0)
+         {
+            auto node = traversal.front();
+            traversal.erase(traversal.begin());
+            if (node == nullptr) { continue; }
+
+            auto int_node = std::static_pointer_cast<const IntervalNode>(node);
+
+            if (int_node->key().contains(point))
+               result.insert(int_node->key());
+            
+            if constexpr (IntervalType::Inclusive)
+            {
+               if (point <= int_node->max())
+                  traversal.push_back(int_node->left());
+            }
+            else {
+               if (point < int_node->max())
+                  traversal.push_back(int_node->left());
+            }
+
+            if (point >= int_node->key().low)
+               traversal.push_back(int_node->right());
+         }
+
+         return result;
       }
 
-      std::shared_ptr<IntervalNode> insert_overlap(const IntervalType &interval)
+      SetType containing_interval(const IntervalType &interval) const {
+         auto result = SetType();
+         if (this->root() == nullptr) { return result; }
+         std::vector<typename AVLTreeBase::ConstSharedNode> traversal = { this->root() };
+
+         while (traversal.size() > 0)
+         {
+            auto node = traversal.front();
+            traversal.erase(traversal.begin());
+            if (node == nullptr) { continue; }
+
+            auto int_node = std::static_pointer_cast<const IntervalNode>(node);
+
+            if (int_node->key().contains(interval))
+            {
+               result.insert(int_node->key());
+            }
+
+            if constexpr (IntervalType::Inclusive)
+            {
+               if (interval.low <= int_node->max())
+                  traversal.push_back(int_node->left());
+            }
+            else
+            {
+               if (interval.low < int_node->max())
+                  traversal.push_back(int_node->left());
+            }
+            
+            if (interval.high >= int_node->key().low)
+               traversal.push_back(int_node->right());
+         }
+
+         return result;
+      }
+
+      SetType overlapping_interval(const IntervalType &interval) const {
+         auto result = SetType();
+         if (this->root() == nullptr) { return result; }
+
+         std::vector<typename AVLTreeBase::ConstSharedNode> traversal = { this->root() };
+         auto int_root = std::static_pointer_cast<const IntervalNode>(this->root());
+         auto int_leftmost = int_root;
+
+         while (int_leftmost->left() != nullptr)
+            int_leftmost = std::static_pointer_cast<const IntervalNode>(int_leftmost->left());
+
+         // check if this interval overlaps all possible nodes
+         if (interval.low <= int_leftmost->key().low && interval.high >= int_root->max())
+         {
+            for (auto value : this->to_vec())
+               result.insert(KeyOfValue()(value));
+            
+            return result;
+         }
+
+         while (traversal.size() > 0)
+         {
+            auto node = traversal.front();
+            traversal.erase(traversal.begin());
+            if (node == nullptr) { continue; }
+
+            auto int_node = std::static_pointer_cast<const IntervalNode>(node);
+
+            if (int_node->key().overlaps(interval))
+               result.insert(int_node->key());
+            
+            if constexpr (IntervalType::Inclusive)
+            {
+               if (interval.low <= int_node->max())
+                  traversal.push_back(int_node->left());
+            }
+            else
+            {
+               if (interval.low < int_node->max())
+                  traversal.push_back(int_node->left());
+            }
+            
+            if (interval.high >= int_node->key().low)
+               traversal.push_back(int_node->right());
+         }
+
+         return result;
+      }
+
+      SetType contained_by_interval(const IntervalType &interval) const {
+         auto result = SetType();
+         if (this->root() == nullptr) { return result; }
+
+         std::vector<typename AVLTreeBase::ConstSharedNode> traversal = { this->root() };
+         auto int_root = std::static_pointer_cast<const IntervalNode>(this->root());
+         auto int_leftmost = int_root;
+
+         while (int_leftmost->left() != nullptr)
+            int_leftmost = std::static_pointer_cast<const IntervalNode>(int_leftmost->left());
+
+         // check if this interval contains all possible nodes
+         if (interval.low <= int_leftmost->key().low && interval.high >= int_root->max())
+         {
+            for (auto value : this->to_vec())
+               result.insert(KeyOfValue()(value));
+            
+            return result;
+         }
+
+         while (traversal.size() > 0)
+         {
+            auto node = traversal.front();
+            traversal.erase(traversal.begin());
+            if (node == nullptr) { continue; }
+
+            auto int_node = std::static_pointer_cast<const IntervalNode>(node);
+
+            if (int_node->key().contained_by(interval))
+               result.insert(int_node->key());
+            
+            if constexpr (IntervalType::Inclusive)
+            {
+               if (interval.low <= int_node->max())
+                  traversal.push_back(int_node->left());
+            }
+            else
+            {
+               if (interval.low < int_node->max())
+                  traversal.push_back(int_node->left());
+            }
+            
+            if (interval.high >= int_node->key().low)
+               traversal.push_back(int_node->right());
+         }
+
+         return result;
+      }
+   };
+
+   template <typename IntervalType>
+   class IntervalTree : public IntervalTreeBase<IntervalType, IntervalType, avltree::KeyIsValue<IntervalType>>
+   {
+   public:
+      using iterator = typename IntervalTreeBase::const_iterator;
+
+      IntervalTree() : IntervalTreeBase() {}
+      IntervalTree(std::vector<IntervalType> &nodes) : IntervalTreeBase(nodes) {}
+      IntervalTree(const IntervalTree &other) : IntervalTreeBase(other) {}
+
+      iterator begin() const { return iterator(this->root()); }
+      iterator end() const { return iterator(nullptr); }
+      iterator cbegin() const { return this->begin(); }
+      iterator cend() const { return this->end(); }
+      
+      std::shared_ptr<typename IntervalTreeBase::IntervalNode> insert_overlap(const IntervalType &interval)
       {
          auto overlaps = this->overlapping_interval(interval);
          auto final_interval = interval;
@@ -208,168 +393,41 @@ namespace intervaltree
 
          return new_tree;
       }
-         
-      SetType containing_point(const typename IntervalType::ValueType &point) const {
-         auto result = SetType();
-         if (this->root() == nullptr) { return result; }
+   };
 
-         std::vector<typename AVLTree::ConstSharedNode> traversal = { this->root() };
-
-         while (traversal.size() > 0)
-         {
-            auto node = traversal.front();
-            traversal.erase(traversal.begin());
-            if (node == nullptr) { continue; }
-
-            auto int_node = std::static_pointer_cast<const IntervalNode>(node);
-
-            if (int_node->value().contains(point))
-               result.insert(int_node->value());
-            
-            if constexpr (IntervalType::Inclusive)
-            {
-               if (point <= int_node->max())
-                  traversal.push_back(int_node->left());
-            }
-            else {
-               if (point < int_node->max())
-                  traversal.push_back(int_node->left());
-            }
-
-            if (point >= int_node->value().low)
-               traversal.push_back(int_node->right());
+   template <typename IntervalType, typename Value>
+   class IntervalMap : public IntervalTreeBase<IntervalType, std::pair<const IntervalType, Value>, avltree::KeyOfPair<IntervalType, Value>>
+   {
+   public:
+      IntervalMap() : IntervalTreeBase() {}
+      IntervalMap(std::vector<typename IntervalTreeBase::ValueType> &nodes) : IntervalTreeBase(nodes) {}
+      IntervalMap(const IntervalMap &other) : IntervalTreeBase(other) {}
+      
+      Value &operator[](const IntervalType &key) {
+         try {
+            return this->get(key);
          }
-
-         return result;
+         catch (exception::KeyNotFound &) {
+            auto node = this->add_node(std::make_pair(key, Value()));
+            return node->value().second;
+         }
+      }
+      const Value &operator[](const IntervalType &key) const { return this->get(key); }
+      
+      bool has_interval(const IntervalType &key) const {
+         return this->contains(key);
       }
 
-      SetType containing_interval(const IntervalType &interval) const {
-         auto result = SetType();
-         if (this->root() == nullptr) { return result; }
-
-         std::vector<typename AVLTree::ConstSharedNode> traversal = { this->root() };
-
-         while (traversal.size() > 0)
-         {
-            auto node = traversal.front();
-            traversal.erase(traversal.begin());
-            if (node == nullptr) { continue; }
-
-            auto int_node = std::static_pointer_cast<const IntervalNode>(node);
-
-            if (int_node->value().contains(interval))
-               result.insert(int_node->value());
-
-            if constexpr (IntervalType::Inclusive)
-            {
-               if (interval.low <= int_node->max())
-                  traversal.push_back(int_node->left());
-            }
-            else
-            {
-               if (interval.low < int_node->max())
-                  traversal.push_back(int_node->left());
-            }
-            
-            if (interval.high >= int_node->value().low)
-               traversal.push_back(int_node->right());
-         }
-
-         return result;
+      std::shared_ptr<typename IntervalTreeBase::IntervalNode> insert(const IntervalType &key, const Value &value) {
+         return IntervalTreeBase::insert(std::make_pair(key, value));
       }
 
-      SetType overlapping_interval(const IntervalType &interval) const {
-         auto result = SetType();
-         if (this->root() == nullptr) { return result; }
-
-         std::vector<typename AVLTree::ConstSharedNode> traversal = { this->root() };
-         auto int_root = std::static_pointer_cast<const IntervalNode>(this->root());
-         auto int_leftmost = int_root;
-
-         while (int_leftmost->left() != nullptr)
-            int_leftmost = std::static_pointer_cast<const IntervalNode>(int_leftmost->left());
-
-         // check if this interval overlaps all possible nodes
-         if (interval.low <= int_leftmost->value().low && interval.high >= int_root->max())
-         {
-            auto vec = this->to_vec();
-            return SetType(vec.begin(), vec.end());
-         }
-
-         while (traversal.size() > 0)
-         {
-            auto node = traversal.front();
-            traversal.erase(traversal.begin());
-            if (node == nullptr) { continue; }
-
-            auto int_node = std::static_pointer_cast<const IntervalNode>(node);
-
-            if (int_node->value().overlaps(interval))
-               result.insert(int_node->value());
-            
-            if constexpr (IntervalType::Inclusive)
-            {
-               if (interval.low <= int_node->max())
-                  traversal.push_back(int_node->left());
-            }
-            else
-            {
-               if (interval.low < int_node->max())
-                  traversal.push_back(int_node->left());
-            }
-            
-            if (interval.high >= int_node->value().low)
-               traversal.push_back(int_node->right());
-         }
-
-         return result;
+      Value &get(const IntervalType &key) {
+         return IntervalTreeBase::get(key)->value().second;
       }
 
-      SetType contained_by_interval(const IntervalType &interval) const {
-         auto result = SetType();
-         if (this->root() == nullptr) { return result; }
-
-         std::vector<typename AVLTree::ConstSharedNode> traversal = { this->root() };
-         auto int_root = std::static_pointer_cast<const IntervalNode>(this->root());
-         auto int_leftmost = int_root;
-
-         while (int_leftmost->left() != nullptr)
-            int_leftmost = std::static_pointer_cast<const IntervalNode>(int_leftmost->left());
-
-         // check if this interval contains all possible nodes
-         if (interval.low <= int_leftmost->value().low && interval.high >= int_root->max())
-         {
-            auto vec = this->to_vec();
-            return SetType(vec.begin(), vec.end());
-         }
-
-         while (traversal.size() > 0)
-         {
-            auto node = traversal.front();
-            traversal.erase(traversal.begin());
-            if (node == nullptr) { continue; }
-
-            auto int_node = std::static_pointer_cast<const IntervalNode>(node);
-
-            if (int_node->value().contained_by(interval))
-               result.insert(int_node->value());
-            
-            if constexpr (IntervalType::Inclusive)
-            {
-               if (interval.low <= int_node->max())
-                  traversal.push_back(int_node->left());
-            }
-            else
-            {
-               if (interval.low < int_node->max())
-                  traversal.push_back(int_node->left());
-            }
-            
-            if (interval.high >= int_node->value().low)
-               traversal.push_back(int_node->right());
-         }
-
-         return result;
+      const Value &get(const IntervalType &key) const {
+         return IntervalTreeBase::get(key)->value().second;
       }
    };
 }

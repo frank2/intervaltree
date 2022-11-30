@@ -119,6 +119,43 @@ test_intervaltree
 }
 
 int
+test_intervalmap
+()
+{
+   INIT();
+   
+   using IntervalType = Interval<std::uintptr_t>;
+   using MapType = IntervalMap<IntervalType, std::size_t>;
+
+   MapType map;
+   std::vector<IntervalType> memory_regions = {
+      {0x400000,0x406000},
+      {0x400000,0x401000},
+      {0x400000,0x400100},
+      {0x400100,0x400200},
+      {0x400200,0x400300},
+      {0x400300,0x401000},
+      {0x401000,0x402000},
+      {0x402000,0x404000},
+      {0x404000,0x406000}
+   };
+
+   for (auto region : memory_regions)
+   {
+      map.insert(region, 0);
+      auto containing = map.containing_interval(region);
+
+      for (auto contained : containing)
+         ++map[contained];
+   }
+
+   ASSERT(map[{0x400000,0x406000}] == memory_regions.size());
+   ASSERT(map[{0x400000,0x401000}] == 5);
+   
+   COMPLETE();
+}
+
+int
 main
 (int argc, char *argv[])
 {
@@ -129,6 +166,9 @@ main
 
    LOG_INFO("Testing IntervalTree.");
    PROCESS_RESULT(test_intervaltree);
+
+   LOG_INFO("Testing IntervalMap.");
+   PROCESS_RESULT(test_intervalmap);
       
    COMPLETE();
 }
